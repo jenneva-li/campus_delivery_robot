@@ -2,9 +2,11 @@ import paho.mqtt.client as mqtt
 import RPi.GPIO as GPIO
 import time
 import json
-from adafruit_vl53l0x import VL53L0X
+from vl53l5cx.vl53l5cx import VL53L5CX
 import busio
 import board
+
+
 
 # MQTT Settings
 MQTT_BROKER = "localhost"  # Change to your MQTT broker address
@@ -28,14 +30,34 @@ ARM_SERVO_2 = 16
 servo_pins = [BASE_SERVO_1, BASE_SERVO_2, ARM_SERVO_1, ARM_SERVO_2] #, CLAW_SERVO_1, CLAW_SERVO_2
 servos = {}
 
+driver = VL53L5CX()
 for pin in servo_pins:
-    GPIO.setup(pin, GPIO.OUT)
-    servos[pin] = GPIO.PWM(pin, 50)
-    servos[pin].start(0)
+     GPIO.setup(pin, GPIO.OUT)
+     servos[pin] = GPIO.PWM(pin, 50)
+     servos[pin].start(0)
 
-# Initialize ToF sensor
-i2c = busio.I2C(board.SCL, board.SDA)
-tof = VL53L0X(i2c)
+# # Initialize ToF sensor
+# i2c = busio.I2C(board.SCL, board.SDA)
+# tof = VL53L0X(i2c)
+
+
+# Check if sensor is alive
+if not driver.is_alive():
+    raise IOError("VL53L5CX Device is not alive")
+
+print("Initializing VL53L5CX sensor...")
+driver.init()
+driver.start_ranging()
+
+def get_distance():
+    """Get distance from the ToF sensor (returns distance in mm from center zone)"""
+    if driver.check_data_ready():
+        ranging_data = driver.get_ranging_data()
+        # Get distance from center zone (zone 5 in 4x4 grid)
+        center_zone = 5
+        distance = ranging_data.distance_mm[driver.nb_target_per_zone * center_zone]
+        return distance
+    return None
 
 def set_servo_angle(servo, angle):
     duty = angle / 18 + 2
@@ -56,10 +78,11 @@ def on_message(client, userdata, msg):
         
         if command == "pick_and_place":
             # Check for object using ToF
-            distance = tof.range
+            distance = get_distance()
             if distance < 200:  # Object within 20cm
                 publish_status(client, "Object detected, starting pickup sequence")
                 
+
                 # Lower arm
                 set_servo_angle(servos[ARM_SERVO_1], 120)
                 set_servo_angle(servos[ARM_SERVO_2], 120)
